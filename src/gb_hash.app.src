@@ -1,0 +1,7 @@
+{application, gb_hash,
+ [{description, "Growbeard Hash Function Utility"},
+  {vsn, "%VSN%"},
+  {modules, [%MODULES%]},
+  {registered, []},
+  {applications, [kernel, stdlib, sasl]}
+ ]}.

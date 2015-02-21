@@ -12,7 +12,8 @@
 %% API
 -export([create_ring/2,
          create_ring/3,
-         find_node/2]).
+         find_node/2,
+         test/1]).
 
 -type hash_algorithms() ::  md5 | ripemd160 | 
                             sha | sha224 | sha256 |
@@ -77,7 +78,7 @@ find_node(Name, Key) ->
         undefined ->
             undefined;
         #gb_hash_func{type = Type,
-                      ring = Ring} ->
+                      ring = Ring}->
             find_node(Ring, Type, Key)
     end.
 
@@ -136,4 +137,30 @@ hash(Type, Data) when is_binary(Data)->
 hash(Type, Data) ->
     hash(Type, term_to_binary(Data)).
 
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Returns the number of keys distributed each shard of a given Table.
+%% Number of keys are hard coded to 100000.
+%%--------------------------------------------------------------------
+-spec test(Table::string()) -> [{Shard::term(), Count::integer()}].
+test(Table) ->
+    random:seed(now()),
+    List = [begin
+                {ok, Shard} = find_node(Table, random:uniform(10000000)),
+                Shard
+            end || _ <- lists:seq(1,100000)],
+    count_occurrences(List, []).
+
+-spec count_occurrences(Shards::[term()], Acc::[{Shard::term(), Count::integer()}]) ->
+    [{Shard::string(), Count::integer()}].
+count_occurrences([H|T], Aux) ->
+    case lists:keyfind(H, 1, Aux) of 
+        false ->
+            count_occurrences(T, [{H, 1} |Aux]);
+        {H, C} ->
+            count_occurrences(T, lists:keyreplace(H, 1, Aux, {H,C+1}))
+    end;
+count_occurrences([], Aux) ->
+    Aux.
 

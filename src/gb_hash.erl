@@ -13,6 +13,7 @@
 -export([create_ring/2,
          create_ring/3,
          find_node/2,
+	 get_nodes/1,
          test/1]).
 
 -type hash_algorithms() ::  md5 | ripemd160 | 
@@ -104,6 +105,19 @@ find_near_hash([_|T], Hash, First) ->
     find_near_hash(T, Hash, First);
 find_near_hash([], _, {_,Node}) ->
     Node.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Get all nodes for a given key on Names' hash ring.
+%%--------------------------------------------------------------------
+-spec get_nodes(Name::string())-> {ok, [Node::term()]} | undefined.
+get_nodes(Name) ->
+    case mochiglobal:get(list_to_atom(Name)) of
+        undefined ->
+            undefined;
+        #gb_hash_func{ring = Ring}->
+            {ok, [ Node || {_H, Node} <- Ring ]}
+    end.
 
 -spec get_consistent_ring(Algo :: hash_algorithms(), Nodes::[term()]) ->
     {ok, Ring::[{Hash::binary(), Node::term()}]}.

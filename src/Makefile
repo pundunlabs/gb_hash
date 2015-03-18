@@ -11,7 +11,11 @@ APP_SRC= $(APP_FILE).src
 APP_TARGET= $(EBIN)/$(APP_FILE)
 
 MODULES = \
-	gb_hash
+	gb_hash \
+	gb_hash_db \
+	gb_hash_app \
+	gb_hash_sup \
+	gb_hash_server
 
 ERL_FILES = $(MODULES:%=%.erl)
 

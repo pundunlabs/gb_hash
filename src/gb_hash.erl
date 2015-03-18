@@ -16,6 +16,8 @@
 	 get_nodes/1,
          test/1]).
 
+-include("gb_hash.hrl").
+
 -type hash_algorithms() ::  md5 | ripemd160 | 
                             sha | sha224 | sha256 |
                             sha384 | sha512.
@@ -34,8 +36,6 @@
 -define(MAX_SHA384, 39402006196394479212279040100143613805079739270465446667948293404245721771497210611414266254884915640806627990306816).
 -define(MAX_SHA512, 13407807929942597099574024998205846127479365820592393377723561443721764030073546976801874298166903427690031858186486050853753882811946569946433649006084096).
 
--record(gb_hash_func,{type,
-                      ring}).
 
 %%%===================================================================
 %%% API
@@ -67,6 +67,7 @@ create_ring(Name, Nodes, Options) ->
         end,
     HashFunc = #gb_hash_func{type = Algo,
                              ring = Ring},
+    ok = gb_hash_server:register_func(Name, HashFunc),
     mochiglobal:put(list_to_atom(Name), HashFunc).
 
 %%--------------------------------------------------------------------

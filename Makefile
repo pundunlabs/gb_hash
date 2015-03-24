@@ -2,9 +2,9 @@ include ./vsn.mk
 VSN=$(GB_HASH_VSN)
 APP_NAME = gb_hash
 
-SUBDIRS = src
+SUBDIRS = src test
 
-.PHONY: all subdirs $(SUBDIRS) edoc eunit clean
+.PHONY: all subdirs $(SUBDIRS) edoc eunit clean ct
 
 all: subdirs
 
@@ -21,6 +21,12 @@ eunit:
 	erl -noshell -pa ebin \
 	-eval 'eunit:test("ebin",[verbose])' \
 	-s init stop
+
+ct:
+	mkdir -p test/ct/log/db
+	ct_run -dir test/ct -logdir test/ct/log \
+	 -pa ebin -pa ../mochiweb/ebin \
+	-mnesia dir '"$(PWD)/test/ct/log/db"'
 
 clean:
 	rm -f ./ebin/*

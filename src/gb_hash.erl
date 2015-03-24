@@ -13,19 +13,25 @@
 -export([create_ring/2,
          create_ring/3,
          find_node/2,
-	 get_nodes/1,
-         test/1]).
+	 get_nodes/1]).
 
 -include("gb_hash.hrl").
 
 -type hash_algorithms() ::  md5 | ripemd160 | 
                             sha | sha224 | sha256 |
-                            sha384 | sha512.
+                            sha384 | sha512 |
+			    wrapper().
 
--type hash_strategy() :: consistent | uniform.
+-type hash_strategy() :: consistent | uniform | timedivision.
+
+-type wrapper() :: {tda,
+		    FileMargin :: pos_integer(),
+		    TimeMargin :: pos_integer()}.
 
 -type option() :: [{algorithm, hash_algorithms()} |
                    {strategy, hash_strategy()}].
+
+-type timestamp() :: {pos_integer(), pos_integer(), pos_integer()}.
 
 %% trunc(math:pow(2,160) -1)
 
@@ -63,7 +69,10 @@ create_ring(Name, Nodes, Options) ->
             consistent ->
                 get_consistent_ring(Algo, Nodes);
             uniform ->
-                get_uniform_ring(Algo, Nodes)
+                get_uniform_ring(Algo, Nodes);
+	    timedivision ->
+		{tda, FileMargin, _TimeMargin} = Algo,
+		get_time_division_ring(FileMargin, Nodes)
         end,
     HashFunc = #gb_hash_func{type = Algo,
                              ring = Ring},
@@ -86,7 +95,18 @@ find_node(Name, Key) ->
 
 -spec find_node(Ring::[{Hash::binary(), Node::term()}],
                 Type::hash_algorithms(),
-                Key::term()) -> {ok, Node::term()}.
+                Key::term()) -> {ok, {level, Node::term()}} |
+				{ok, Node::term()} |
+				undefined.
+find_node(Ring, {tda, FileMargin, TimeMargin}, Key) ->
+    case find_timestamp_in_key(Key) of
+	undefined ->
+	    undefined;
+	{ok, Ts} ->
+	    Bucket = tda(FileMargin, TimeMargin, Ts),
+	    {_, Node} = lists:keyfind(Bucket, 1, Ring),
+	    {ok, {level, Node}}
+    end;
 find_node(Ring, Type, Key) ->
     Hash = hash(Type, Key),
     Node = find_near_hash(Ring, Hash),
@@ -116,6 +136,9 @@ get_nodes(Name) ->
     case mochiglobal:get(list_to_atom(Name)) of
         undefined ->
             undefined;
+	#gb_hash_func{type = {tda, _, _},
+		      ring = Ring}->
+            {ok, {level, [ Node || {_H, Node} <- Ring ]}};
         #gb_hash_func{ring = Ring}->
             {ok, [ Node || {_H, Node} <- Ring ]}
     end.
@@ -145,6 +168,15 @@ get_uniform_ring(Algo, Nodes) ->
     Ring = lists:zip(Ranges, Nodes),
     {ok, Ring}.
 
+-spec get_time_division_ring(FileMargin :: pos_integer(),
+			     Nodes :: [term()]) ->
+    {ok, Ring::[{Ts :: timestamp(), Node::term()}]}.
+get_time_division_ring(FileMargin, Nodes) ->
+    Modulus = lists:seq(0, FileMargin-1),
+    Ring = lists:zip(Modulus, Nodes),
+    {ok, Ring}.
+
+
 -spec hash(Type::hash_algorithms(), Data::binary())-> Digest::binary()
         ; (Type::hash_algorithms(), Data::term()) -> Digest::binary().
 hash(Type, Data) when is_binary(Data)->
@@ -152,30 +184,16 @@ hash(Type, Data) when is_binary(Data)->
 hash(Type, Data) ->
     hash(Type, term_to_binary(Data)).
 
+-spec tda(FileMargin :: pos_integer(), TimeMargin :: pos_integer(), Ts :: timestamp()) ->
+    Bucket :: integer().
+tda(FileMargin, TimeMargin, {_, Seconds, _}) ->
+    N = Seconds div TimeMargin,
+    N rem FileMargin.
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Returns the number of keys distributed each shard of a given Table.
-%% Number of keys are hard coded to 100000.
-%%--------------------------------------------------------------------
--spec test(Table::string()) -> [{Shard::term(), Count::integer()}].
-test(Table) ->
-    random:seed(now()),
-    List = [begin
-                {ok, Shard} = find_node(Table, random:uniform(10000000)),
-                Shard
-            end || _ <- lists:seq(1,100000)],
-    count_occurrences(List, []).
-
--spec count_occurrences(Shards::[term()], Acc::[{Shard::term(), Count::integer()}]) ->
-    [{Shard::string(), Count::integer()}].
-count_occurrences([H|T], Aux) ->
-    case lists:keyfind(H, 1, Aux) of 
-        false ->
-            count_occurrences(T, [{H, 1} |Aux]);
-        {H, C} ->
-            count_occurrences(T, lists:keyreplace(H, 1, Aux, {H,C+1}))
-    end;
-count_occurrences([], Aux) ->
-    Aux.
-
+-spec find_timestamp_in_key(Key :: [{atom(), term()}]) -> undefined | {ok, Ts :: timestamp()}.  
+find_timestamp_in_key([])->
+    undefined;
+find_timestamp_in_key([{ts, Ts}|_Rest]) ->
+    {ok, Ts};
+find_timestamp_in_key([_|Rest]) ->
+    find_timestamp_in_key(Rest). 

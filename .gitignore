@@ -1,6 +1,9 @@
 # ignore any file generated under ebin dirs
 ebin
 
+# igone beams generated anywhere
+*.beam
+
 # ignore dependencies folder
 deps
 
@@ -30,3 +33,6 @@ erl_crash.dump
 
 # ignore .plts (Dialyzer PLT directory)
 .plts
+
+# ignore common test logdir
+test/ct/log

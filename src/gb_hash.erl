@@ -12,7 +12,8 @@
 %% API
 -export([create_ring/2,
          create_ring/3,
-         find_node/2,
+         delete_ring/1,
+	 find_node/2,
 	 get_nodes/1]).
 
 -include("gb_hash.hrl").
@@ -50,8 +51,9 @@
 %%--------------------------------------------------------------------
 %% @doc
 %% Create a ring of nodes where each node gets an assigned hash value.
+%% @end
 %%--------------------------------------------------------------------
--spec create_ring(Name::string(), Nodes::[term()])-> ok.
+-spec create_ring(Name :: string(), Nodes :: [term()])-> ok.
 create_ring(Name, Nodes) ->
     create_ring(Name, Nodes, []).
 
@@ -59,8 +61,11 @@ create_ring(Name, Nodes) ->
 %% @doc
 %% Create a ring of nodes where each node gets an assigned hash value.
 %% Set hash algorithm and strategy by prooviding Options.
+%% @end
 %%--------------------------------------------------------------------
--spec create_ring(Name::string(), Nodes::[term()], Options:: [option()])-> ok.
+-spec create_ring(Name :: string(),
+		  Nodes :: [term()],
+		  Options :: [option()])-> ok.
 create_ring(Name, Nodes, Options) ->
     Algo = proplists:get_value(algorithm, Options, sha),
     Stra = proplists:get_value(strategy, Options, consistent),
@@ -81,9 +86,20 @@ create_ring(Name, Nodes, Options) ->
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Delete a hash ring.
+%% @end
+%%--------------------------------------------------------------------
+-spec delete_ring(Name :: string())-> ok.
+delete_ring(Name) ->
+    mochiglobal:delete(list_to_atom(Name)),
+    gb_hash_server:unregister_func(Name).
+
+%%--------------------------------------------------------------------
+%% @doc
 %% Find node for a given key on Names' hash ring.
 %%--------------------------------------------------------------------
--spec find_node(Name::string(), Key::term())-> {ok, Node::term()} | undefined.
+-spec find_node(Name :: string(), Key :: term())->
+    {ok, Node :: term()} | undefined.
 find_node(Name, Key) ->
     case mochiglobal:get(list_to_atom(Name)) of
         undefined ->
@@ -93,11 +109,11 @@ find_node(Name, Key) ->
             find_node(Ring, Type, Key)
     end.
 
--spec find_node(Ring::[{Hash::binary(), Node::term()}],
-                Type::hash_algorithms(),
-                Key::term()) -> {ok, {level, Node::term()}} |
-				{ok, Node::term()} |
-				undefined.
+-spec find_node(Ring :: [{Hash :: binary(), Node :: term()}],
+                Type :: hash_algorithms(),
+                Key :: term()) -> {ok, {level, Node :: term()}} |
+				  {ok, Node :: term()} |
+				  undefined.
 find_node(Ring, {tda, FileMargin, TimeMargin}, Key) ->
     case find_timestamp_in_key(Key) of
 	undefined ->
@@ -112,14 +128,14 @@ find_node(Ring, Type, Key) ->
     Node = find_near_hash(Ring, Hash),
     {ok, Node}.
 
--spec find_near_hash(Ring::[{Hash::binary(), Node::term()}],
-                     Hash::binary()) -> Node::term().
+-spec find_near_hash(Ring :: [{Hash :: binary(), Node :: term()}],
+                     Hash :: binary()) -> Node :: term().
 find_near_hash(Ring, Hash) ->
     find_near_hash(Ring, Hash, hd(Ring)).
 
--spec find_near_hash(Ring::[{H::binary(), Node::term()}], 
-                     Hash::binary(),
-                     First::{H::binary(), Node::term()}) -> Node::term().
+-spec find_near_hash(Ring :: [{H :: binary(), Node :: term()}], 
+                     Hash :: binary(),
+                     First :: {H :: binary(), Node :: term()}) -> Node :: term().
 find_near_hash([{H, Node}|_], Hash, _) when Hash < H ->
     Node;
 find_near_hash([_|T], Hash, First) ->
@@ -131,7 +147,7 @@ find_near_hash([], _, {_,Node}) ->
 %% @doc
 %% Get all nodes for a given key on Names' hash ring.
 %%--------------------------------------------------------------------
--spec get_nodes(Name::string())-> {ok, [Node::term()]} | undefined.
+-spec get_nodes(Name :: string())-> {ok, [Node :: term()]} | undefined.
 get_nodes(Name) ->
     case mochiglobal:get(list_to_atom(Name)) of
         undefined ->
@@ -143,13 +159,13 @@ get_nodes(Name) ->
             {ok, [ Node || {_H, Node} <- Ring ]}
     end.
 
--spec get_consistent_ring(Algo :: hash_algorithms(), Nodes::[term()]) ->
-    {ok, Ring::[{Hash::binary(), Node::term()}]}.
+-spec get_consistent_ring(Algo :: hash_algorithms(), Nodes :: [term()]) ->
+    {ok, Ring :: [{Hash :: binary(), Node :: term()}]}.
 get_consistent_ring(Algo, Nodes)->
     {ok, lists:keysort(1, [{hash(Algo, Node), Node} || Node <- Nodes])}.
 
--spec get_uniform_ring(Algo :: hash_algorithms(), Nodes::[term()]) ->
-    {ok, Ring::[{Hash::binary, Node::term()}]}.
+-spec get_uniform_ring(Algo :: hash_algorithms(), Nodes :: [term()]) ->
+    {ok, Ring :: [{Hash :: binary, Node :: term()}]}.
 get_uniform_ring(Algo, Nodes) ->
     Num = length(Nodes),
     MaxHash =
@@ -170,15 +186,15 @@ get_uniform_ring(Algo, Nodes) ->
 
 -spec get_time_division_ring(FileMargin :: pos_integer(),
 			     Nodes :: [term()]) ->
-    {ok, Ring::[{Ts :: timestamp(), Node::term()}]}.
+    {ok, Ring :: [{Ts :: timestamp(), Node :: term()}]}.
 get_time_division_ring(FileMargin, Nodes) ->
     Modulus = lists:seq(0, FileMargin-1),
     Ring = lists:zip(Modulus, Nodes),
     {ok, Ring}.
 
 
--spec hash(Type::hash_algorithms(), Data::binary())-> Digest::binary()
-        ; (Type::hash_algorithms(), Data::term()) -> Digest::binary().
+-spec hash(Type :: hash_algorithms(), Data :: binary())-> Digest :: binary()
+        ; (Type :: hash_algorithms(), Data :: term()) -> Digest :: binary().
 hash(Type, Data) when is_binary(Data)->
     crypto:bytes_to_integer(crypto:hash(Type, Data));
 hash(Type, Data) ->

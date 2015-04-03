@@ -35,5 +35,3 @@ count_occurrences([H|T], Aux) ->
     end;
 count_occurrences([], Aux) ->
     Aux.
-
-

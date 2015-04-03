@@ -170,7 +170,9 @@ groups() ->
 %%              are to be executed.
 %%--------------------------------------------------------------------
 all() -> 
-    [create_ring_sha_uniform, create_ring_wrapper_timedivision].
+    [create_ring_sha_uniform,
+     create_ring_wrapper_timedivision,
+     delete_rings].
 
 
 %%--------------------------------------------------------------------
@@ -245,3 +247,13 @@ create_ring_wrapper_timedivision(_Config) ->
 	ExampleNode = gb_hash:find_node(Name, Key),
 	ct:log("ExampleNode: ~p~n",[ExampleNode])
      end || Key <- KeyList].
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Delete hash rings created in this suite.
+%% @end
+%%--------------------------------------------------------------------
+delete_rings(_Config) ->
+    Rings = ["test_ring", "test_ring_tda"],
+    [ ok = gb_hash:delete_ring(R) || R <- Rings ],
+    ct:log("All rings deleted.").

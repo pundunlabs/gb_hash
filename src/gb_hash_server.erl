@@ -13,7 +13,8 @@
 %% API
 -export([start_link/0]).
 
--export([register_func/2]).
+-export([register_func/2,
+	 unregister_func/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -41,12 +42,38 @@
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
--spec register_func(Name :: string(), Func :: #gb_hash_func{}) -> ok |
-								  {error, Reasoni :: term()}.
+%%--------------------------------------------------------------------
+%% @doc
+%% Register a hash ring function by writing a #gb_hash_register{}
+%% record to mnesia dets table.
+%% @end
+%%--------------------------------------------------------------------
+-spec register_func(Name :: string(), Func :: #gb_hash_func{}) ->
+     ok | {error, Reason :: term()}.
 register_func(Name, Func) ->
     Transaction =
         fun() ->
 	    mnesia:write(#gb_hash_register{name = Name, func = Func})
+	end,
+    case gb_hash_db:transaction(Transaction) of
+	{atomic, ok} ->
+	    ok;
+	{error, Reason} ->
+	    {error, Reason}
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Unregister a hash ring function by deleting a record specified by
+%% Name as key from mnesia dets table gb_hash_func.
+%% @end
+%%--------------------------------------------------------------------
+-spec unregister_func(Name :: string()) ->
+    ok | {error, Reason :: term()}.
+unregister_func(Name) ->
+    Transaction =
+        fun() ->
+	    mnesia:delete(gb_hash_register, Name, write)
 	end,
     case gb_hash_db:transaction(Transaction) of
 	{atomic, ok} ->

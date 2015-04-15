@@ -36,3 +36,7 @@ erl_crash.dump
 
 # ignore common test logdir
 test/ct/log
+
+# ignore .rebar folder
+.rebar
+

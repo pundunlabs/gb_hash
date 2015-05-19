@@ -76,7 +76,7 @@ create_ring(Name, Nodes, Options) ->
             uniform ->
                 get_uniform_ring(Algo, Nodes);
 	    timedivision ->
-		{tda, FileMargin, _TimeMargin} = Algo,
+		{_, FileMargin, _TimeMargin} = Algo,
 		get_time_division_ring(FileMargin, Nodes)
         end,
     HashFunc = #gb_hash_func{type = Algo,
@@ -114,7 +114,9 @@ find_node(Name, Key) ->
                 Key :: term()) -> {ok, {level, Node :: term()}} |
 				  {ok, Node :: term()} |
 				  undefined.
-find_node(Ring, {tda, FileMargin, TimeMargin}, Key) ->
+
+find_node(Ring, {Type, FileMargin, TimeMargin}, Key) when Type =:= tda;
+							  Type =:= mem_tda ->
     case find_timestamp_in_key(Key) of
 	undefined ->
 	    undefined;
@@ -212,4 +214,4 @@ find_timestamp_in_key([])->
 find_timestamp_in_key([{ts, Ts}|_Rest]) ->
     {ok, Ts};
 find_timestamp_in_key([_|Rest]) ->
-    find_timestamp_in_key(Rest). 
+    find_timestamp_in_key(Rest).

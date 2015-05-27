@@ -14,6 +14,7 @@
          create_ring/3,
          delete_ring/1,
 	 find_node/2,
+	 find_node/3,
 	 get_nodes/1]).
 
 -include("gb_hash.hrl").

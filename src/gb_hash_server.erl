@@ -25,6 +25,7 @@
 	code_change/3]).
 
 -include("gb_hash.hrl").
+-include("gb_log.hrl").
 
 -record(state, {}).
 
@@ -99,6 +100,7 @@ unregister_func(Name) ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
+    ok = mnesia:wait_for_tables([gb_hash_register], 20000),
     ok = initiate_register(),
     {ok, #state{}}.
 
@@ -158,7 +160,8 @@ handle_info(_Info, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(_Reason, _State) ->
-    ok.
+   ?debug("terminating.", []),
+   ok.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -189,7 +192,7 @@ initiate_register() ->
 
 -spec fold_register(Register :: #gb_hash_register{}, ok) -> ok | {error, Acc :: term()}.
 fold_register(#gb_hash_register{name=Name, func=Func}, ok) ->
-    case gb_hash:get_nodes(Name) of
+    case mochiglobal:get(list_to_atom(Name)) of
 	undefined ->
 	    mochiglobal:put(list_to_atom(Name), Func);
 	Func ->

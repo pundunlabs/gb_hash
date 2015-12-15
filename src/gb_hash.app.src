@@ -3,6 +3,6 @@
   {vsn, "0.1"},
   {modules, []},
   {registered, []},
-  {applications, [kernel, stdlib, sasl, gb_log, gb_conf]},
+  {applications, [kernel, stdlib, gb_log, gb_conf]},
   {mod, {gb_hash_app,[]}}
  ]}.

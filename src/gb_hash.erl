@@ -15,7 +15,8 @@
 	 find_node/2,
 	 find_node/3,
 	 get_node/2,
-	 get_nodes/1]).
+	 get_nodes/1,
+	 hash/2]).
 
 -include("gb_hash.hrl").
 

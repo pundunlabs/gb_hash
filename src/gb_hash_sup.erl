@@ -56,10 +56,10 @@ init([]) ->
 
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
 
-    GBHServer = {gb_hash_server, {gb_hash_server, start_link, []},
-		 permanent, 2000, worker, [gb_hash_server]},
+    GBHRegister = {gb_hash_register, {gb_hash_register, start_link, []},
+		   permanent, 2000, worker, [gb_hash_register]},
 
-    {ok, {SupFlags, [GBHServer]}}.
+    {ok, {SupFlags, [GBHRegister]}}.
 
 %%%===================================================================
 %%% Internal functions

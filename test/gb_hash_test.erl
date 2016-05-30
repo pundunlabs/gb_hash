@@ -17,7 +17,7 @@
 %%--------------------------------------------------------------------
 -spec count_occurrences(Table :: string()) -> [{Shard::term(), Count::integer()}].
 count_occurrences(Table) ->
-    random:seed(now()),
+    random:seed(os:timestamp()),
     List = [begin
 	    {ok, Shard} = gb_hash:find_node(Table, random:uniform(10000000)),
 	    Shard

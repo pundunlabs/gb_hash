@@ -79,8 +79,7 @@ create_ring(Name, Nodes, Options) ->
         end,
     HashFunc = #gb_hash_func{type = Algo,
                              ring = Ring},
-    ok = gb_hash_server:register_func(Name, HashFunc),
-    mochiglobal:put(list_to_atom(Name), HashFunc).
+    gb_hash_register:insert(Name, HashFunc).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -89,8 +88,7 @@ create_ring(Name, Nodes, Options) ->
 %%--------------------------------------------------------------------
 -spec delete_ring(Name :: string())-> ok.
 delete_ring(Name) ->
-    mochiglobal:delete(list_to_atom(Name)),
-    gb_hash_server:unregister_func(Name).
+    gb_hash_register:delete(Name).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -99,8 +97,7 @@ delete_ring(Name) ->
 -spec get_node(Name :: string(), Key :: term())->
     {ok, Node :: term()} | undefined.
 get_node(Name, Key) ->
-    %% TODO: replace mochiglobal; risky to use list_to_atom/1 in external API calls
-    case mochiglobal:get(list_to_atom(Name)) of
+    case gb_hash_register:lookup(Name) of
         undefined ->
             undefined;
         #gb_hash_func{type = Type,
@@ -115,8 +112,7 @@ get_node(Name, Key) ->
 -spec find_node(Name :: string(), Key :: term())->
     {ok, Node :: term()} | undefined.
 find_node(Name, Key) ->
-    %% TODO: replace mochiglobal; risky to use list_to_atom/1 in external API calls
-    case mochiglobal:get(list_to_atom(Name)) of
+    case gb_hash_register:lookup(Name) of
         undefined ->
             undefined;
         #gb_hash_func{type = Type,
@@ -155,7 +151,7 @@ find_near_hash([], _, {_,Node}) ->
 %%--------------------------------------------------------------------
 -spec get_nodes(Name :: string())-> {ok, [Node :: term()]} | undefined.
 get_nodes(Name) ->
-    case mochiglobal:get(list_to_atom(Name)) of
+    case gb_hash_register:lookup(Name) of
         undefined ->
             undefined;
         #gb_hash_func{ring = Ring}->

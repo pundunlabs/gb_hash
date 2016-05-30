@@ -25,7 +25,6 @@ eunit:
 ct:
 	mkdir -p test/ct/log/db
 	ct_run -dir test/ct -logdir test/ct/log \
-	 -pa ebin -pa ../mochiweb/ebin \
 	-mnesia dir '"$(PWD)/test/ct/log/db"'
 
 clean:

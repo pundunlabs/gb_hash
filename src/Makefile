@@ -15,7 +15,7 @@ MODULES = \
 	gb_hash_db \
 	gb_hash_app \
 	gb_hash_sup \
-	gb_hash_server
+	gb_hash_register
 
 ERL_FILES = $(MODULES:%=%.erl)
 

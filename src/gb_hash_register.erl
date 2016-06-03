@@ -11,10 +11,15 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0,
-	 insert/2,
-	 delete/1,
-	 lookup/1]).
+-export([start_link/1,
+	 insert/3,
+	 delete/2,
+	 lookup/2]).
+
+%% Inter Node API
+-export([load_store/2,
+	 load_store_ok/1,
+	 revert/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -27,9 +32,8 @@
 -include("gb_hash.hrl").
 -include("gb_log.hrl").
 
--define(Mod, gb_hash_genreg).
-
--record(state, {}).
+-record(state, {mod,
+		filename}).
 
 %%%===================================================================
 %%% API
@@ -42,18 +46,21 @@
 %% existing code.
 %% @end
 %%--------------------------------------------------------------------
--spec insert(Key :: string(), Value :: term()) ->
-    ok | {error, Reason :: term()}.
-insert(Key, Value) when is_list(Key)->
-    insert(Key, Value, cerl:is_literal_term(Value));
-insert(Key, _) ->
+-spec insert(Reg :: atom(), Key :: string(), Value :: term()) ->
+    {ok, Beam :: binary()} | {error, Reason :: term()}.
+insert(Reg, Key, Value) when is_list(Key)->
+    insert(Reg, Key, Value, is_literal_term(Value));
+insert(_, Key, _) ->
     {error, {key_not_list, Key}}.
 
--spec insert(Key :: string(), Value :: term(), Bool :: true | false) ->
-    ok | {error, Reason :: term()}.
-insert(Key, Value, true) ->
-    gen_server:call(?MODULE, {register, Key, Value});
-insert(_, Value, false) ->
+-spec insert(Reg :: atom(),
+	     Key :: string(),
+	     Value :: term(),
+	     Bool :: true | false) ->
+    {ok, Beam :: binary()} | {error, Reason :: term()}.
+insert(Reg, Key, Value, true) ->
+    gen_server:call(Reg, {register, Key, Value});
+insert(_, _, Value, false) ->
     {error, {data_not_literal, Value}}.
 
 %%--------------------------------------------------------------------
@@ -61,21 +68,53 @@ insert(_, Value, false) ->
 %% Delete a register entry for mapping specified by Key.
 %% @end
 %%--------------------------------------------------------------------
--spec delete(Key :: string()) ->
-    ok | {error, Reason ::term()}.
-delete(Key) ->
-    gen_server:call(?MODULE, {unregister, Key}).
-
+-spec delete(Reg :: atom(), Key :: string()) ->
+    {ok, Beam :: binary()} | {error, Reason ::term()}.
+delete(Reg, Key) ->
+    gen_server:call(Reg, {unregister, Key}).
 
 %%--------------------------------------------------------------------
 %% @doc
 %% Lookup for a register entry specified by Key.
 %% @end
 %%--------------------------------------------------------------------
--spec lookup(Key :: string()) ->
+-spec lookup(Mod :: module(), Key :: string()) ->
     Value :: term() | undefined.
-lookup(Key) ->
-    ?Mod:lookup(Key).
+lookup(Mod, Key) ->
+    Mod:lookup(Key).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Load and Store new register module and return ok.
+%% @end
+%%--------------------------------------------------------------------
+-spec load_store_ok(Beam :: binary()) ->
+    ok | {error, Reason ::term()}.
+load_store_ok(Beam) when is_binary(Beam) ->
+    case load_store(?DistReg, Beam) of
+	{ok, _} -> ok;
+	Else -> Else
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Load and Store new register module.
+%% @end
+%%--------------------------------------------------------------------
+-spec load_store(Reg :: atom(), Beam :: binary()) ->
+    {ok, Beam :: binary()} | {error, Reason ::term()}.
+load_store(Reg, Beam) when is_binary(Beam) ->
+    gen_server:call(Reg, {load_store, Beam}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Revert the hash register to CommitID.
+%% @end
+%%--------------------------------------------------------------------
+-spec revert(CommitID :: term()) ->
+    {ok, Beam :: binary()} | {error, Reason ::term()}.
+revert(CommitID) ->
+    gen_server:call(?MODULE, {revert, CommitID}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -84,8 +123,9 @@ lookup(Key) ->
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+start_link(Args) ->
+    Name = proplists:get_value(name, Args),
+    gen_server:start_link({local, Name}, ?MODULE, Args, []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -102,11 +142,19 @@ start_link() ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([]) ->
-    ok = mnesia:wait_for_tables([gb_hash_register], 20000),
-    Entries = registry_to_list(),
-    ok = regen_register(Entries),
-    {ok, #state{}}.
+init(Args) ->
+    Mod = proplists:get_value(mod, Args),
+    File = proplists:get_value(file, Args),
+    RootDir = gb_conf_env:proddir(),
+    Filename = RootDir ++ File,
+    case file:read_file(Filename) of
+	{ok, Bin} ->
+	    {ok, _} = load_register(Mod, Bin);
+	{error,enoent} ->
+	    {ok, _} = regen_register(Mod, Filename, [])
+    end,
+    {ok, #state{mod = Mod,
+		filename = Filename}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -123,34 +171,23 @@ init([]) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({register, Name, Func}, _From, State) ->
-    Transaction =
-        fun() ->
-	    ok = mnesia:write(#gb_hash_register{name = Name, func = Func}),
-	    Entries = registry_to_list(),
-	    ok = regen_register(Entries)
-	end,
-    Reply =
-	case gb_hash_db:transaction(Transaction) of
-	    {atomic, ok} ->
-		ok;
-	    {error, Reason} ->
-		{error, Reason}
-	end,
+    Mod = State#state.mod,
+    Filename = State#state.filename,
+    Entries = Mod:entries(),
+    Reply = regen_register(Mod, Filename, [{Name, Func} | Entries]),
     {reply, Reply, State};
 handle_call({unregister, Name}, _From, State) ->
-    Transaction =
-        fun() ->
-	    ok = mnesia:delete(gb_hash_register, Name, write),
-	    Entries = registry_to_list(),
-	    ok = regen_register(Entries)
-	end,
-    Reply = 
-	case gb_hash_db:transaction(Transaction) of
-	    {atomic, ok} ->
-		ok;
-	    {error, Reason} ->
-		{error, Reason}
-	end,
+    Mod = State#state.mod,
+    Filename = State#state.filename,
+    Entries = Mod:entries(),
+    Reply = regen_register(Mod, Filename, lists:keydelete(Name, 1, Entries)),
+    {reply, Reply, State};
+handle_call({load_store, Beam}, _From, State) ->
+    store_beam(State#state.filename, Beam),
+    Reply = load_register(State#state.mod, Beam),
+    {reply, Reply, State};
+handle_call({revert, _CommitID}, _From, State) ->
+    Reply = ?debug("Revert functionality is not supported yet.",[]),
     {reply, Reply, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -211,43 +248,44 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
--spec registry_to_list() ->
-    [{Name :: string(), Func :: term()}] | {error, Reason :: term()}.
-registry_to_list() ->
-    case mnesia:is_transaction() of
-	true ->
-	    mnesia:foldl(fun reg_traverse/2, [], gb_hash_register);
-	false ->
-    	    Transaction =
-	        fun() ->
-		    mnesia:foldl(fun reg_traverse/2, [], gb_hash_register)
-		end,
-	    case gb_hash_db:transaction(Transaction) of
-		{atomic, NewAcc} ->
-		    lists:reverse(NewAcc);
-		{error, Reason} ->
-		    {error, Reason}
-	    end
-    end.
-
--spec reg_traverse(Rec :: #gb_hash_register{},
-		   Acc :: [{string(), term()}]) ->
-    [{string(), term()}].
-reg_traverse(#gb_hash_register{name = Name, func = Func}, Acc) ->
-    [{Name, Func} | Acc].
 
 %%--------------------------------------------------------------------
 %% @doc
 %% Re-generate register with given Entries.
 %% @end
 %%--------------------------------------------------------------------
--spec regen_register(Entries :: [{string(), term()}]) ->
-    ok.
-regen_register(Entries) ->
-    CEForms = make_mod(Entries),
+-spec regen_register(Mod :: module(),
+		     Filename :: string(),
+		     Entries :: [{string(), term()}]) ->
+    {ok, Beam :: binary()}.
+regen_register(Mod, Filename, Entries) ->
+    CEForms = make_mod(Mod, Entries),
     {ok, _, Beam} = compile:forms(CEForms, [from_core, binary]),
-    {module, _ } = code:load_binary(?Mod, [], Beam),
+    store_beam(Filename, Beam),
+    load_register(Mod, Beam).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Write object code to file to store persistent.
+%% @end
+%%--------------------------------------------------------------------
+-spec store_beam(Filename :: string(),
+		 Bin :: binary()) ->
     ok.
+store_beam(Filename, Bin) ->
+    file:write_file(Filename, Bin).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Load object code of register module code on node().
+%% @end
+%%--------------------------------------------------------------------
+-spec load_register(Mod :: module(),
+		    Bin :: binary()) ->
+    {ok, Bin :: binary()}.
+load_register(Mod, Bin) ->
+    {module, _ } = code:load_binary(Mod, [], Bin),
+    {ok, Bin}.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -255,15 +293,26 @@ regen_register(Entries) ->
 %% terms in Entries.
 %% @end
 %%--------------------------------------------------------------------
--spec make_mod(Entries :: [{Key :: string(), Value :: term()}]) ->
+-spec make_mod(Mod :: module(),
+	       Entries :: [{Key :: string(), Value :: term()}]) ->
     term().
-make_mod(Entries) ->
-    ModuleName = cerl:c_atom(?Mod),
+make_mod(Mod, Entries) ->
+    ModuleName = cerl:c_atom(Mod),
     cerl:c_module(ModuleName,
-		  [cerl:c_fname(lookup, 1),
+		  [cerl:c_fname(entries, 0),
+		   cerl:c_fname(lookup, 1),
 		   cerl:c_fname(module_info, 0),
 		   cerl:c_fname(module_info, 1)],
-		  [make_lookup_fun(Entries) | mod_info(ModuleName)]).
+		  [make_entries_fun(Entries),
+		   make_lookup_fun(Entries) | mod_info(ModuleName)]).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Make entries/0 function.
+%% @end
+%%--------------------------------------------------------------------
+make_entries_fun(Entries) ->
+    {cerl:c_fname(entries,0), cerl:c_fun([], cerl:abstract(Entries))}.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -318,6 +367,44 @@ mod_info(Name) ->
     Info1 = {cerl:c_fname(module_info, 1),
 	     cerl:c_fun([Key], cerl:c_call(M, F, [Name, Key]))},
     [Info0, Info1].
+
+%% Taken from cerl.erl and added maps support.
+%% @spec is_literal_term(Term::term()) -> boolean()
+%%
+%% @doc Returns <code>true</code> if <code>Term</code> can be
+%% represented as a literal, otherwise <code>false</code>. This
+%% function takes time proportional to the size of <code>Term</code>.
+%% This function is a copy from cerl.erl with added support for
+%% maps.
+%% @see abstract/1
+
+-spec is_literal_term(term()) -> boolean().
+
+is_literal_term(T) when is_integer(T) -> true;
+is_literal_term(T) when is_float(T) -> true;
+is_literal_term(T) when is_atom(T) -> true;
+is_literal_term([]) -> true;
+is_literal_term([H | T]) ->
+    is_literal_term(H) andalso is_literal_term(T);
+is_literal_term(T) when is_tuple(T) ->
+    is_literal_term_list(tuple_to_list(T));
+is_literal_term(T) when is_map(T) ->
+    is_literal_term_list(maps:to_list(T));
+is_literal_term(B) when is_bitstring(B) -> true;
+is_literal_term(_) ->
+    false.
+
+-spec is_literal_term_list([term()]) -> boolean().
+
+is_literal_term_list([T | Ts]) ->
+    case is_literal_term(T) of
+	true ->
+	    is_literal_term_list(Ts);
+	false ->
+	    false
+    end;
+is_literal_term_list([]) ->
+    true.
 
 %%--------------------------------------------------------------------
 %% %@doc

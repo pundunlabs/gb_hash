@@ -244,7 +244,7 @@ create_ring_wrapper_timedivision(_Config) ->
 		     [{ts, Ts}]
 	       end || N <- lists:seq(0, FileMargin-1)],
     [begin
-	ExampleNode = gb_hash:find_node(Name, Key),
+	ExampleNode = gb_hash:get_node(Name, Key),
 	ct:log("ExampleNode: ~p~n",[ExampleNode])
      end || Key <- KeyList].
 

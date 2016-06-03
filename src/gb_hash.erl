@@ -12,11 +12,12 @@
 -export([create_ring/2,
          create_ring/3,
          delete_ring/1,
-	 find_node/2,
-	 find_node/3,
 	 get_node/2,
+	 get_local_node/2,
 	 get_nodes/1,
-	 hash/2]).
+	 hash/2,
+	 exists/1,
+	 is_distributed/1]).
 
 -include("gb_hash.hrl").
 
@@ -34,7 +35,7 @@
 -type option() :: [{algorithm, hash_algorithms()} |
                    {strategy, hash_strategy()}].
 
--type timestamp() :: {pos_integer(), pos_integer(), pos_integer()}.
+%%-type timestamp() :: {pos_integer(), pos_integer(), pos_integer()}.
 
 %% trunc(math:pow(2,160) -1)
 
@@ -66,7 +67,8 @@ create_ring(Name, Nodes) ->
 %%--------------------------------------------------------------------
 -spec create_ring(Name :: string(),
 		  Nodes :: [term()],
-		  Options :: [option()])-> ok.
+		  Options :: [option()])->
+    {ok, Beam :: binary()} | {error, Reason :: term()}.
 create_ring(Name, Nodes, Options) ->
     Algo = proplists:get_value(algorithm, Options, sha),
     Stra = proplists:get_value(strategy, Options, consistent),
@@ -79,7 +81,11 @@ create_ring(Name, Nodes, Options) ->
         end,
     HashFunc = #gb_hash_func{type = Algo,
                              ring = Ring},
-    gb_hash_register:insert(Name, HashFunc).
+    Reg = case proplists:get_value(local, Options) of
+	    true -> ?LocReg;
+	    _ -> ?DistReg
+	  end,
+    gb_hash_register:insert(Reg, Name, HashFunc).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -88,16 +94,40 @@ create_ring(Name, Nodes, Options) ->
 %%--------------------------------------------------------------------
 -spec delete_ring(Name :: string())-> ok.
 delete_ring(Name) ->
-    gb_hash_register:delete(Name).
+    Reg = where_is(Name),
+    gb_hash_register:delete(Reg, Name).
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Get node for a given key on Names' hash ring.
+%% Get node for a given key on hash rings.
 %%--------------------------------------------------------------------
 -spec get_node(Name :: string(), Key :: term())->
     {ok, Node :: term()} | undefined.
 get_node(Name, Key) ->
-    case gb_hash_register:lookup(Name) of
+    case get_node(?DistMod, Name, Key) of
+	undefined ->
+	    get_node(?LocMod, Name, Key);
+	R ->
+	    R
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Get node for a given key on local hash ring.
+%%--------------------------------------------------------------------
+-spec get_local_node(Name :: string(), Key :: term())->
+    {ok, Node :: term()} | undefined.
+get_local_node(Name, Key) ->
+    get_node(?LocMod, Name, Key).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Get node for a given key on Mod module's hash ring.
+%%--------------------------------------------------------------------
+-spec get_node(Mod :: atom(), Name :: string(), Key :: term())->
+    {ok, Node :: term()} | undefined.
+get_node(Mod, Name, Key) ->
+    case gb_hash_register:lookup(Mod, Name) of
         undefined ->
             undefined;
         #gb_hash_func{type = Type,
@@ -107,17 +137,86 @@ get_node(Name, Key) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Find node for a given key on Names' hash ring.
+%% Get all nodes for a given key on hash rings.
+%% @end
 %%--------------------------------------------------------------------
--spec find_node(Name :: string(), Key :: term())->
-    {ok, Node :: term()} | undefined.
-find_node(Name, Key) ->
-    case gb_hash_register:lookup(Name) of
+-spec get_nodes(Name :: string())-> {ok, [Node :: term()]} | undefined.
+get_nodes(Name) ->
+    case get_nodes(?DistMod, Name) of
+        undefined ->
+            get_nodes(?LocMod, Name);
+        R ->
+            R
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Get all nodes for a given key on Mod module's hash ring.
+%% @end
+%%--------------------------------------------------------------------
+-spec get_nodes(Mod :: atom(),
+		Name :: string())->
+    {ok, [Node :: term()]} | undefined.
+get_nodes(Mod, Name) ->
+    case gb_hash_register:lookup(Mod, Name) of
         undefined ->
             undefined;
-        #gb_hash_func{type = Type,
-                      ring = Ring} ->
-            find_node(Ring, Type, Key)
+        #gb_hash_func{ring = Ring}->
+            {ok, [ Node || {_H, Node} <- Ring ]}
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Check if table with Name exists on hash rings.
+%% @end
+%%--------------------------------------------------------------------
+-spec exists(Name :: string())->
+    true | false.
+exists(Name) ->
+    case gb_hash_register:lookup(?DistMod, Name) of
+        undefined ->
+	    case gb_hash_register:lookup(?LocMod, Name) of
+		undefined ->
+		    false;
+		_ -> true
+	    end;
+        _ -> true
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Check if the table with given Name is distributed.
+%% @end
+%%--------------------------------------------------------------------
+-spec is_distributed(Name :: string())->
+    Bool :: boolean().
+is_distributed(Name) ->
+    case gb_hash_register:lookup(?DistMod, Name) of
+        undefined ->
+	    case gb_hash_register:lookup(?LocMod, Name) of
+		undefined ->
+		    undefined;
+		_ -> false
+	    end;
+        _ -> true
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Check on which hash ring the table with Name exists.
+%% @end
+%%--------------------------------------------------------------------
+-spec where_is(Name :: string())->
+    Reg ::atom().
+where_is(Name) ->
+    case gb_hash_register:lookup(?DistMod, Name) of
+        undefined ->
+	    case gb_hash_register:lookup(?LocMod, Name) of
+		undefined ->
+		    undefined;
+		_ -> ?LocMod
+	    end;
+        _ -> ?DistMod
     end.
 
 -spec find_node(Ring :: [{Hash :: binary(), Node :: term()}],
@@ -131,32 +230,21 @@ find_node(Ring, Type, Key) ->
     {ok, Node}.
 
 -spec find_near_hash(Ring :: [{Hash :: binary(), Node :: term()}],
-                     Hash :: binary()) -> Node :: term().
+                     Hash :: binary()) ->
+    Node :: term().
 find_near_hash(Ring, Hash) ->
     find_near_hash(Ring, Hash, hd(Ring)).
 
 -spec find_near_hash(Ring :: [{H :: binary(), Node :: term()}], 
                      Hash :: binary(),
-                     First :: {H :: binary(), Node :: term()}) -> Node :: term().
+                     First :: {H :: binary(), Node :: term()}) ->
+    Node :: term().
 find_near_hash([{H, Node}|_], Hash, _) when Hash < H ->
     Node;
 find_near_hash([_|T], Hash, First) ->
     find_near_hash(T, Hash, First);
 find_near_hash([], _, {_,Node}) ->
     Node.
-
-%%--------------------------------------------------------------------
-%% @doc
-%% Get all nodes for a given key on Names' hash ring.
-%%--------------------------------------------------------------------
--spec get_nodes(Name :: string())-> {ok, [Node :: term()]} | undefined.
-get_nodes(Name) ->
-    case gb_hash_register:lookup(Name) of
-        undefined ->
-            undefined;
-        #gb_hash_func{ring = Ring}->
-            {ok, [ Node || {_H, Node} <- Ring ]}
-    end.
 
 -spec get_consistent_ring(Algo :: hash_algorithms(), Nodes :: [term()]) ->
     {ok, Ring :: [{Hash :: binary(), Node :: term()}]}.
@@ -183,13 +271,13 @@ get_uniform_ring(Algo, Nodes) ->
     Ring = lists:zip(Ranges, Nodes),
     {ok, Ring}.
 
--spec get_time_division_ring(FileMargin :: pos_integer(),
-			     Nodes :: [term()]) ->
-    {ok, Ring :: [{Ts :: timestamp(), Node :: term()}]}.
-get_time_division_ring(FileMargin, Nodes) ->
-    Modulus = lists:seq(0, FileMargin-1),
-    Ring = lists:zip(Modulus, Nodes),
-    {ok, Ring}.
+%%-spec get_time_division_ring(FileMargin :: pos_integer(),
+%%			     Nodes :: [term()]) ->
+%%    {ok, Ring :: [{Ts :: timestamp(), Node :: term()}]}.
+%%get_time_division_ring(FileMargin, Nodes) ->
+%%    Modulus = lists:seq(0, FileMargin-1),
+%%    Ring = lists:zip(Modulus, Nodes),
+%%    {ok, Ring}.
 
 -spec hash(Type :: hash_algorithms(), Data :: binary())-> Digest :: binary()
         ; (Type :: hash_algorithms(), Data :: term()) -> Digest :: binary().

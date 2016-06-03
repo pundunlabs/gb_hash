@@ -19,7 +19,7 @@
 count_occurrences(Table) ->
     random:seed(os:timestamp()),
     List = [begin
-	    {ok, Shard} = gb_hash:find_node(Table, random:uniform(10000000)),
+	    {ok, Shard} = gb_hash:get_node(Table, random:uniform(10000000)),
 	    Shard
 	    end || _ <- lists:seq(1,100000)],
     count_occurrences(List, []).

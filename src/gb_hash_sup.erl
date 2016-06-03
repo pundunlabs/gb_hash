@@ -16,6 +16,8 @@
 %% Supervisor callbacks
 -export([init/1]).
 
+-include("gb_hash.hrl").
+
 -define(SERVER, ?MODULE).
 %%%===================================================================
 %%% API functions
@@ -56,10 +58,21 @@ init([]) ->
 
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
 
-    GBHRegister = {gb_hash_register, {gb_hash_register, start_link, []},
-		   permanent, 2000, worker, [gb_hash_register]},
+    LocOpts = [{name, ?LocReg},
+	       {mod, ?LocMod},
+	       {file, "/data/gb_hash_loc_register"}],
+    GBHLocRegister = {?LocReg,
+		      {gb_hash_register, start_link, [LocOpts]},
+		      permanent, 2000, worker, [gb_hash_register]},
 
-    {ok, {SupFlags, [GBHRegister]}}.
+    DistOpts = [{name, ?DistReg},
+	       {mod, ?DistMod},
+	       {file, "/data/gb_hash_dist_register"}],
+    GBHDistRegister = {?DistReg,
+		       {gb_hash_register, start_link, [DistOpts]},
+		       permanent, 2000, worker, [gb_hash_register]},
+
+    {ok, {SupFlags, [GBHLocRegister, GBHDistRegister]}}.
 
 %%%===================================================================
 %%% Internal functions

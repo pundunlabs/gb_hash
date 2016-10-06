@@ -95,7 +95,12 @@ create_ring(Name, Nodes, Options) ->
 -spec delete_ring(Name :: string())-> ok.
 delete_ring(Name) ->
     Reg = where_is(Name),
-    gb_hash_register:delete(Reg, Name).
+    case gb_hash_register:delete(Reg, Name) of
+	{ok, _Bin} ->
+	    ok;
+	Else ->
+	    Else
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -214,9 +219,9 @@ where_is(Name) ->
 	    case gb_hash_register:lookup(?LocMod, Name) of
 		undefined ->
 		    undefined;
-		_ -> ?LocMod
+		_ -> ?LocReg
 	    end;
-        _ -> ?DistMod
+        _ -> ?DistReg
     end.
 
 -spec find_node(Ring :: [{Hash :: binary(), Node :: term()}],

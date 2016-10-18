@@ -17,7 +17,8 @@
 	 get_nodes/1,
 	 hash/2,
 	 exists/1,
-	 is_distributed/1]).
+	 is_distributed/1,
+	 all_entries/0]).
 
 -include("gb_hash.hrl").
 
@@ -205,6 +206,17 @@ is_distributed(Name) ->
 	    end;
         _ -> true
     end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Return all entries for.
+%% @end
+%%--------------------------------------------------------------------
+-spec all_entries()->
+    Entries :: [term()].
+all_entries() ->
+    Entries  = gb_hash_register:all(?DistMod),
+    [Name || {Name,_} <- Entries].
 
 %%--------------------------------------------------------------------
 %% @doc

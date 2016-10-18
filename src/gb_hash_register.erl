@@ -14,7 +14,8 @@
 -export([start_link/1,
 	 insert/3,
 	 delete/2,
-	 lookup/2]).
+	 lookup/2,
+	 all/1]).
 
 %% Inter Node API
 -export([load_store/2,
@@ -82,6 +83,16 @@ delete(Reg, Key) ->
     Value :: term() | undefined.
 lookup(Mod, Key) ->
     Mod:lookup(Key).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Lookup for all entries in given module.
+%% @end
+%%--------------------------------------------------------------------
+-spec all(Mod :: module()) ->
+    Value :: term() | undefined.
+all(Mod) ->
+    Mod:entries().
 
 %%--------------------------------------------------------------------
 %% @doc

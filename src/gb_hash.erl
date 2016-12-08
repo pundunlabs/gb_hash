@@ -24,22 +24,14 @@
 
 -type hash_algorithms() ::  md5 | ripemd160 | 
                             sha | sha224 | sha256 |
-                            sha384 | sha512 |
-			    wrapper().
+                            sha384 | sha512.
 
--type hash_strategy() :: consistent | uniform | timedivision.
-
--type wrapper() :: {tda,
-		    FileMargin :: pos_integer(),
-		    TimeMargin :: pos_integer()}.
+-type hash_strategy() :: consistent | uniform | rendezvous | virtual_nodes.
 
 -type option() :: [{algorithm, hash_algorithms()} |
                    {strategy, hash_strategy()}].
 
-%%-type timestamp() :: {pos_integer(), pos_integer(), pos_integer()}.
-
 %% trunc(math:pow(2,160) -1)
-
 -define(MAX_MD5, 340282366920938463463374607431768211456).
 -define(MAX_SHA, 1461501637330902918203684832716283019655932542976).
 -define(MAX_SHA224, 26959946667150639794667015087019630673637144422540572481103610249216).
@@ -71,17 +63,25 @@ create_ring(Name, Nodes) ->
 		  Options :: [option()])->
     {ok, Beam :: binary()} | {error, Reason :: term()}.
 create_ring(Name, Nodes, Options) ->
-    Algo = proplists:get_value(algorithm, Options, sha),
+    Algo = proplists:get_value(algorithm, Options, sha256),
     Stra = proplists:get_value(strategy, Options, consistent),
-    {ok, Ring} =
+    HashFunc =
         case Stra of
             consistent ->
-                get_consistent_ring(Algo, Nodes);
+                {ok, Ring} = get_consistent_ring(Algo, Nodes),
+		#{strategy => Stra, algorithm => Algo, ring => Ring};
             uniform ->
-                get_uniform_ring(Algo, Nodes)
-        end,
-    HashFunc = #gb_hash_func{type = Algo,
-                             ring = Ring},
+                {ok, Ring} = get_uniform_ring(Algo, Nodes),
+		#{strategy => Stra, algorithm => Algo, ring => Ring};
+            virtual_nodes ->
+		VNodes = proplists:get_value(vnodes, Options, 512),
+                {ok, Ring} = get_vnodes_ring(Algo, Nodes, VNodes),
+		#{strategy => Stra, algorithm => Algo, ring => Ring};
+	    rendezvous ->
+		{ok, Ring, Skeleton} = get_rendezvous_ring(Nodes),
+		#{strategy => Stra, algorithm => Algo, ring => Ring,
+		  skeleton => Skeleton}
+	end,
     Reg = case proplists:get_value(local, Options) of
 	    true -> ?LocReg;
 	    _ -> ?DistReg
@@ -136,9 +136,11 @@ get_node(Mod, Name, Key) ->
     case gb_hash_register:lookup(Mod, Name) of
         undefined ->
             undefined;
-        #gb_hash_func{type = Type,
-                      ring = Ring} ->
-            find_node(Ring, Type, Key)
+        #{strategy := rendezvous, algorithm := Algo, ring := Ring,
+	  skeleton := Skeleton} ->
+            find_fhrw_node(Skeleton, Ring, Algo, Key);
+        #{algorithm := Algo, ring := Ring} ->
+            find_node(Ring, Algo, Key)
     end.
 
 %%--------------------------------------------------------------------
@@ -167,8 +169,10 @@ get_nodes(Mod, Name) ->
     case gb_hash_register:lookup(Mod, Name) of
         undefined ->
             undefined;
-        #gb_hash_func{ring = Ring}->
-            {ok, [ Node || {_H, Node} <- Ring ]}
+        #{strategy:= rendezvous, ring := Ring}->
+	    {ok, Ring};
+	#{ring := Ring}->
+	    {ok, [ Node || {_H, Node} <- Ring ]}
     end.
 
 %%--------------------------------------------------------------------
@@ -182,8 +186,7 @@ exists(Name) ->
     case gb_hash_register:lookup(?DistMod, Name) of
         undefined ->
 	    case gb_hash_register:lookup(?LocMod, Name) of
-		undefined ->
-		    false;
+		undefined -> false;
 		_ -> true
 	    end;
         _ -> true
@@ -237,12 +240,11 @@ where_is(Name) ->
     end.
 
 -spec find_node(Ring :: [{Hash :: binary(), Node :: term()}],
-                Type :: hash_algorithms(),
-                Key :: term()) -> {ok, {level, Node :: term()}} |
-				  {ok, Node :: term()} |
-				  undefined.
-find_node(Ring, Type, Key) ->
-    Hash = hash(Type, Key),
+                Algo :: hash_algorithms(),
+                Key :: term()) ->
+    {ok, Node :: term()} | undefined.
+find_node(Ring, Algo, Key) ->
+    Hash = hash(Algo, Key),
     Node = find_near_hash(Ring, Hash),
     {ok, Node}.
 
@@ -257,10 +259,44 @@ find_near_hash(Ring, Hash) ->
                      First :: {H :: binary(), Node :: term()}) ->
     Node :: term().
 find_near_hash([{H, Node}|_], Hash, _) when Hash < H ->
-    Node;
+   Node;
 find_near_hash([_|T], Hash, First) ->
     find_near_hash(T, Hash, First);
 find_near_hash([], _, {_,Node}) ->
+    Node.
+
+-spec find_fhrw_node(Skeleton :: [[integer()]],
+		     Ring :: term(),
+		     Algo :: hash_algorithms(),
+		     Key :: term()) ->
+    {ok, Node :: term()} | undefined.
+find_fhrw_node(Skeleton, Ring, Algo, Key) ->
+    Path = fanout(Skeleton, Algo, Key, 0, []),
+    {ok, maps:get(Path, Ring)}.
+
+-spec fanout(Skeleton :: [[integer()]],
+	     Algo :: hash_algorithms(),
+	     Key :: term(),
+	     S :: integer(),
+	     Acc :: [integer()]) ->
+    Path :: [pos_integer()].
+fanout([H | T], Algo, Key, S, Acc) ->
+    Digit = find_hrw_node(H, Algo, {S, Key}),
+    fanout(T, Algo, Key, Digit, [Digit | Acc]);
+fanout([], _Algo, _Key, _, Acc) ->
+    lists:reverse(Acc).
+
+find_hrw_node([N | T], Algo, Key) ->
+    find_hrw_node(T, Algo, Key, {N, hash(Algo, {N, Key})}).
+
+find_hrw_node([H | T], Algo, Key, {N, Max}) ->
+    case hash(Algo, {H, Key}) of
+	Hash when Hash > Max ->
+	    find_hrw_node(T, Algo, Key, {H, Hash});
+	_ ->
+	    find_hrw_node(T, Algo, Key, {N, Max})
+    end;
+find_hrw_node([], _, _,{Node, _}) ->
     Node.
 
 -spec get_consistent_ring(Algo :: hash_algorithms(), Nodes :: [term()]) ->
@@ -269,7 +305,7 @@ get_consistent_ring(Algo, Nodes)->
     {ok, lists:keysort(1, [{hash(Algo, Node), Node} || Node <- Nodes])}.
 
 -spec get_uniform_ring(Algo :: hash_algorithms(), Nodes :: [term()]) ->
-    {ok, Ring :: [{Hash :: binary, Node :: term()}]}.
+    {ok, Ring :: [{Hash :: binary(), Node :: term()}]}.
 get_uniform_ring(Algo, Nodes) ->
     Num = length(Nodes),
     MaxHash =
@@ -288,13 +324,48 @@ get_uniform_ring(Algo, Nodes) ->
     Ring = lists:zip(Ranges, Nodes),
     {ok, Ring}.
 
-%%-spec get_time_division_ring(FileMargin :: pos_integer(),
-%%			     Nodes :: [term()]) ->
-%%    {ok, Ring :: [{Ts :: timestamp(), Node :: term()}]}.
-%%get_time_division_ring(FileMargin, Nodes) ->
-%%    Modulus = lists:seq(0, FileMargin-1),
-%%    Ring = lists:zip(Modulus, Nodes),
-%%    {ok, Ring}.
+-spec get_vnodes_ring(Algo :: hash_algorithms(),
+		      Nodes :: term(),
+		      VNodes :: pos_integer()) ->
+    {ok, Ring :: [{Hash :: binary(), Node :: term()}]}.
+get_vnodes_ring(Algo, Nodes, VNodes) ->
+    MaxHash =
+        case Algo of
+            md5 -> ?MAX_MD5;
+            ripemd160  -> ?MAX_SHA;
+            sha -> ?MAX_SHA;
+            sha224 -> ?MAX_SHA224;
+            sha256 -> ?MAX_SHA256;
+            sha384 -> ?MAX_SHA384;
+            sha512 -> ?MAX_SHA512
+        end,
+    Range = MaxHash div VNodes,
+    Ring = [{N*Range, Node} || {N, Node} <- map_vnodes(VNodes, Nodes)],
+    {ok, Ring}.
+
+-spec get_rendezvous_ring(Nodes :: [term()]) ->
+    {ok, Ring :: map(), Skeleton :: [[integer()]]}.
+get_rendezvous_ring(Nodes) ->
+    Skeleton = skeleton(length(Nodes)),
+    Cartesian = cartesian(Skeleton),
+    List = lists:zip(Cartesian, Nodes),
+    Ring = maps:from_list(List),
+    {ok, Ring, Skeleton}.
+
+-spec map_vnodes(VNodes :: pos_integer(),
+		 Nodes :: [term()]) ->
+    map().
+map_vnodes(VNodes, Nodes) ->
+    map_vnodes(VNodes, Nodes, []).
+
+-spec map_vnodes(VNodes :: integer(),
+		 Nodes :: [term()],
+		 Mapping :: [Node :: term()]) ->
+    [term()].
+map_vnodes(0, _, Mapping) ->
+    Mapping;
+map_vnodes(VNodes, [N | Nodes], Mapping) ->
+    map_vnodes(VNodes - 1, lists:append(Nodes, [N]), [{VNodes, N} | Mapping]).
 
 -spec hash(Type :: hash_algorithms(), Data :: binary())-> Digest :: binary()
         ; (Type :: hash_algorithms(), Data :: term()) -> Digest :: binary().
@@ -302,3 +373,43 @@ hash(Type, Data) when is_binary(Data)->
     crypto:bytes_to_integer(crypto:hash(Type, Data));
 hash(Type, Data) ->
     hash(Type, term_to_binary(Data)).
+
+-spec factorize(N :: pos_integer()) ->
+    [pos_integer()].
+factorize(1) ->
+    [1];
+factorize(N) ->
+    factorize(N, 2, []).
+
+-spec factorize(N :: pos_integer(),
+		F :: pos_integer(),
+		Acc :: [pos_integer()]) ->
+    [pos_integer()].
+factorize(N, N, Acc)->
+    lists:reverse([N | Acc]);
+factorize(N, F, Acc) when N rem F == 0 ->
+    factorize(N div F, F, [F | Acc]);
+factorize(N, F, Acc) ->
+    factorize(N, F+1, Acc).
+
+-spec skeleton(Int :: pos_integer()) ->
+    [[pos_integer()]].
+skeleton(N) ->
+    skeleton(factorize(N), []).
+
+-spec skeleton(Factors :: [pos_integer()],
+	       Acc :: [pos_integer()]) ->
+    [[pos_integer()]].
+skeleton([2, N | Rest], Acc) ->
+    skeleton(Rest, [2*N|Acc]);
+skeleton([N | Rest], Acc) ->
+    skeleton(Rest, [N|Acc]);
+skeleton([], Acc) ->
+    lists:reverse([ lists:seq(0, I-1) || I <- Acc]).
+
+-spec cartesian([[term()]]) ->
+    [term()].
+cartesian([H])   ->
+    [[A] || A <- H];
+cartesian([H|T]) ->
+    [[A|B] || A <- H, B <- cartesian(T)].

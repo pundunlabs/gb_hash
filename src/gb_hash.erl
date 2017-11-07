@@ -218,8 +218,9 @@ is_distributed(Name) ->
 -spec all_entries()->
     Entries :: [term()].
 all_entries() ->
-    Entries  = gb_hash_register:all(?DistMod),
-    [Name || {Name,_} <- Entries].
+    Local = [Name || {Name, _} <- gb_hash_register:all(?LocMod)],
+    Dist = [Name || {Name, _} <- gb_hash_register:all(?DistMod)],
+    Local ++ Dist.
 
 %%--------------------------------------------------------------------
 %% @doc
